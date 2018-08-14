@@ -12,6 +12,19 @@ rancher integration
 
 `./bin/refunc-rancher`
 
+## Dev on testing env
+
+1. Install using `kubectl`
+    ```shell
+    kubectl create -f ./k8s
+    ```
+
+1. Login to rancher, build your own porxy URL like the following
+    ```
+    https://rancher.<your-domain>.com/k8s/clusters/<cluster-id-where-refunc-deployed>/api/v1/namespaces/refunc/services/http:refunc-rancher:80/proxy/
+    ```
+
+
 ## License
 Copyright (c) 2018 [refunc.io](http://refunc.io)
 

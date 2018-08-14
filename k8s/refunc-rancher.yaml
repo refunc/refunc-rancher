@@ -1,0 +1,46 @@
+apiVersion: apps/v1beta2
+kind: Deployment
+metadata:
+  labels:
+    app: refunc-rancher
+  name: refunc-rancher
+  namespace: refunc
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: refunc-rancher
+  template:
+    metadata:
+      labels:
+        app: refunc-rancher
+    spec:
+      containers:
+      - image: refunc/refunc-rancher:dev
+        imagePullPolicy: Always
+        name: apiserver
+        ports:
+        - containerPort: 1234
+          protocol: TCP
+      restartPolicy: Always
+      serviceAccount: refunc-adminfunc
+      serviceAccountName: refunc-adminfunc
+
+---
+
+kind: Service
+apiVersion: v1
+metadata:
+  name: refunc-rancher
+  namespace: refunc
+  labels:
+    app: refunc-rancher
+spec:
+  selector:
+    app: refunc-rancher
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 1234
