@@ -50,6 +50,10 @@ func main() {
 		cfgPath := os.Getenv("KUBECONFIG")
 		if cfgPath == "" {
 			cfgPath = filepath.Join(homedir.HomeDir(), ".kube/config")
+			if _, err := os.Stat(cfgPath); err != nil {
+				// fallback to guess config using InClusterConfig
+				cfgPath = ""
+			}
 		}
 		kubeConfig, err := clientcmd.BuildConfigFromFlags("", cfgPath)
 		if err != nil {
