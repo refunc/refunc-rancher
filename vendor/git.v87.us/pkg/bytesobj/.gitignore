@@ -1,0 +1,26 @@
+# Mac
+.DS_Store
+
+# Mr Developer
+.idea
+*.iml
+.stfolder
+.stignore
+.refast
+/build
+/release
+/bin
+
+.ipynb_checkpoints
+*.ipynb
+__pycache__
+_obj
+
+.vscode
+.env
+.dapper
+.version
+
+.bash_history
+
+/cmd/mdsrc/lib

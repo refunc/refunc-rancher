@@ -1,0 +1,15 @@
+/.dapper
+/bin
+/dist
+*.swp
+/.trash-cache
+.vscode
+.env
+/package/*
+!/package/Dockerfile
+.bash_history
+*.pyc
+.DS_Store
+.cache
+.bundle-verion
+/values.*
