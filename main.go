@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 
 	rfv1 "git.v87.us/formicary/refunc/pkg/apis/refunc/v1"
 	"github.com/rancher/norman/api"
@@ -14,6 +16,7 @@ import (
 	"github.com/rancher/norman/types"
 	"github.com/rancher/norman/types/factory"
 	"github.com/rancher/norman/types/mapper"
+	"github.com/rancher/norman/urlbuilder"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	apiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
@@ -24,21 +27,6 @@ import (
 // VERSION of current binary
 var VERSION = "v0.1.0-dev"
 
-var (
-	version = types.APIVersion{
-		Version: rfv1.SchemeGroupVersion.Version,
-		Group:   rfv1.SchemeGroupVersion.Group,
-		Path:    fmt.Sprintf("/refunc/v1"),
-	}
-
-	schemas = factory.Schemas(&version)
-)
-
-func init() {
-	// Only log the warning severity or above.
-	logrus.SetLevel(logrus.DebugLevel)
-}
-
 func main() {
 	app := cli.NewApp()
 	app.Name = "refunc-rancher"
@@ -46,6 +34,10 @@ func main() {
 	app.Usage = "You need help!"
 	app.Action = func(c *cli.Context) error {
 		ctx := context.Background()
+
+		if os.Getenv("REFUNC_DEBUG") == "true" {
+			logrus.SetLevel(logrus.DebugLevel)
+		}
 
 		cfgPath := os.Getenv("KUBECONFIG")
 		if cfgPath == "" {
@@ -65,6 +57,13 @@ func main() {
 			panic(err)
 		}
 
+		version := types.APIVersion{
+			Version: rfv1.SchemeGroupVersion.Version,
+			Group:   rfv1.SchemeGroupVersion.Group,
+			Path:    "/refunc/v1",
+		}
+
+		schemas := factory.Schemas(&version)
 		subscribe.Register(&version, schemas)
 
 		// funceves
@@ -119,7 +118,17 @@ func main() {
 		}
 
 		fmt.Println("Listening on 0.0.0.0:1234")
-		http.ListenAndServe("0.0.0.0:1234", server)
+		http.ListenAndServe("0.0.0.0:1234", http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+			// handle k8s proxy forward X-Forwarded-Uri
+			if fwdURI := req.Header.Get("X-Forwarded-Uri"); fwdURI != "" {
+				apiPrefix := strings.TrimSuffix(fwdURI, req.URL.Path)
+				if clusterID := os.Getenv("RANCHER_CLUSTER_ID"); clusterID != "" {
+					apiPrefix = path.Join("/k8s/clusters", clusterID, apiPrefix)
+				}
+				req.Header.Add(urlbuilder.PrefixHeader, apiPrefix)
+			}
+			server.ServeHTTP(rw, req)
+		}))
 		return nil
 	}
 
