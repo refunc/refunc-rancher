@@ -63,29 +63,27 @@ func main() {
 			Path:    "/refunc/v1",
 		}
 
-		schemas := factory.Schemas(&version)
+		schemas := newSchemas(&version)
 		subscribe.Register(&version, schemas)
 
 		// funceves
 		schemas.MustImport(&version, rfv1.FuncdefSpec{}, struct {
 			Meta map[string]interface{} `json:"meta"`
 		}{}).MustImportAndCustomize(&version, rfv1.Funcdef{}, func(schema *types.Schema) {
-			schema.Scope = types.NamespaceScope
 			schema.PluralName = rfv1.FuncdefPluralName
 			if err := assignStores(ctx, k8sClient, types.DefaultStorageContext, schema, rfv1.CRDs[0].CRD); err != nil {
 				panic(err)
 			}
-		})
+		}, namespacedType)
 
 		// xenvs
 		schemas.AddMapperForType(&version, rfv1.XenvSpec{},
 			mapper.Move{From: "type", To: "xenvType"},
 		).MustImportAndCustomize(&version, rfv1.Xenv{}, func(schema *types.Schema) {
-			schema.Scope = types.NamespaceScope
 			if err := assignStores(ctx, k8sClient, types.DefaultStorageContext, schema, rfv1.CRDs[1].CRD); err != nil {
 				panic(err)
 			}
-		})
+		}, namespacedType)
 
 		// triggers
 		schemas.AddMapperForType(&version, rfv1.TriggerSpec{},
@@ -96,21 +94,19 @@ func main() {
 			}},
 			mapper.Move{From: "type", To: "triggerType"},
 		).MustImportAndCustomize(&version, rfv1.Trigger{}, func(schema *types.Schema) {
-			schema.Scope = types.NamespaceScope
 			if err := assignStores(ctx, k8sClient, types.DefaultStorageContext, schema, rfv1.CRDs[2].CRD); err != nil {
 				panic(err)
 			}
-		})
+		}, namespacedType)
 
 		// funcinsts
 		schemas.MustImportAndCustomize(&version, rfv1.Funcinst{}, func(schema *types.Schema) {
-			schema.Scope = types.NamespaceScope
 			schema.CollectionMethods = []string{http.MethodGet}
 			schema.ResourceMethods = []string{http.MethodGet, http.MethodDelete}
 			if err := assignStores(ctx, k8sClient, types.DefaultStorageContext, schema, rfv1.CRDs[3].CRD); err != nil {
 				panic(err)
 			}
-		})
+		}, namespacedType)
 
 		server := api.NewAPIServer()
 		if err := server.AddSchemas(schemas); err != nil {
@@ -146,3 +142,31 @@ func assignStores(ctx context.Context, ClientGetter proxy.ClientGetter, storageC
 
 	return nil
 }
+
+func newSchemas(version *types.APIVersion) *types.Schemas {
+	schemas := factory.Schemas(version)
+	baseFunc := schemas.DefaultMappers
+	schemas.DefaultMappers = func() []types.Mapper {
+		mappers := append(baseFunc(), &mapper.Scope{
+			If: types.NamespaceScope,
+			Mappers: []types.Mapper{
+				&mapper.Move{
+					From: "namespace",
+					To:   "namespaceId",
+				},
+				&mapper.ReadOnly{
+					Field:    "namespaceId",
+					Optional: false,
+				},
+			},
+		})
+		return mappers
+	}
+	return schemas
+}
+
+type namespacedOverride struct {
+	types.Namespaced
+}
+
+var namespacedType = namespacedOverride{}
