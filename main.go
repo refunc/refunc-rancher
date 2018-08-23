@@ -16,6 +16,7 @@ import (
 	"github.com/rancher/norman/types"
 	"github.com/rancher/norman/types/factory"
 	"github.com/rancher/norman/types/mapper"
+	"github.com/rancher/norman/types/values"
 	"github.com/rancher/norman/urlbuilder"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
@@ -100,13 +101,19 @@ func main() {
 		}, namespacedType)
 
 		// funcinsts
-		schemas.MustImportAndCustomize(&version, rfv1.Funcinst{}, func(schema *types.Schema) {
+		schemas.AddMapperForType(&version, rfv1.Funcinst{},
+			labelToField{LabelField: "name", Field: "funcdefName"},
+			fillFundefIDField{},
+		).MustImportAndCustomize(&version, rfv1.Funcinst{}, func(schema *types.Schema) {
 			schema.CollectionMethods = []string{http.MethodGet}
 			schema.ResourceMethods = []string{http.MethodGet, http.MethodDelete}
 			if err := assignStores(ctx, k8sClient, types.DefaultStorageContext, schema, rfv1.CRDs[3].CRD); err != nil {
 				panic(err)
 			}
-		}, namespacedType)
+		}, namespacedType, struct {
+			FuncdefName string `json:"funcdefName"`
+			FuncdefID   string `json:"funcdefId"`
+		}{})
 
 		server := api.NewAPIServer()
 		if err := server.AddSchemas(schemas); err != nil {
@@ -170,3 +177,48 @@ type namespacedOverride struct {
 }
 
 var namespacedType = namespacedOverride{}
+
+type labelToField struct {
+	LabelField string
+	Field      string
+}
+
+func (e labelToField) FromInternal(data map[string]interface{}) {
+	if e.LabelField == "" {
+		e.LabelField = e.Field
+	}
+	v, ok := values.RemoveValue(data, "labels", "refunc.io/"+e.LabelField)
+	if ok {
+		data[e.Field] = v
+	}
+}
+
+func (e labelToField) ToInternal(data map[string]interface{}) error {
+	v, ok := data[e.Field]
+	if ok {
+		if e.LabelField == "" {
+			e.LabelField = e.Field
+		}
+		values.PutValue(data, v, "labels", "refunc.io/"+e.LabelField)
+	}
+	return nil
+}
+
+func (e labelToField) ModifySchema(schema *types.Schema, schemas *types.Schemas) error {
+	return mapper.ValidateField(e.Field, schema)
+}
+
+type fillFundefIDField struct{}
+
+func (e fillFundefIDField) FromInternal(data map[string]interface{}) {
+	data["funcdefId"] = fmt.Sprintf("%s:%s", data["namespaceId"], data["funcdefName"])
+}
+
+func (e fillFundefIDField) ToInternal(data map[string]interface{}) error {
+	values.RemoveValue(data, "funcdefId")
+	return nil
+}
+
+func (e fillFundefIDField) ModifySchema(schema *types.Schema, schemas *types.Schemas) error {
+	return nil
+}
