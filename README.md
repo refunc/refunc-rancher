@@ -24,6 +24,9 @@ rancher integration
     https://rancher.<your-domain>.com/k8s/clusters/<cluster-id-where-refunc-deployed>/api/v1/namespaces/refunc/services/http:refunc-rancher:80/proxy/
     ```
 
+## Screenshots
+
+![functions.png](https://user-images.githubusercontent.com/354668/44561064-56969c00-a785-11e8-80b2-8e66b045f0e9.png "Functions page")
 
 ## License
 Copyright (c) 2018 [refunc.io](http://refunc.io)
