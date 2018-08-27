@@ -120,10 +120,20 @@ func main() {
 			panic(err)
 		}
 
-		fmt.Println("Listening on 0.0.0.0:1234")
+		logrus.Infoln("Listening on 0.0.0.0:1234")
 		http.ListenAndServe("0.0.0.0:1234", http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-			// handle k8s proxy forward X-Forwarded-Uri
-			if fwdURI := req.Header.Get("X-Forwarded-Uri"); fwdURI != "" {
+			// walkaround the issue https://issues.k8s.io/67878
+			parts := strings.SplitN(req.URL.Path, "/x-forwarded-uri", 2)
+			var fwdURI string
+			if len(parts) == 2 {
+				fwdURI = parts[1]
+				req.URL.Path = parts[0]
+			}
+			if fwdURI == "" {
+				// handle k8s proxy forward X-Forwarded-Uri
+				fwdURI = req.Header.Get("X-Forwarded-Uri")
+			}
+			if fwdURI != "" {
 				apiPrefix := strings.TrimSuffix(fwdURI, req.URL.Path)
 				if clusterID := os.Getenv("RANCHER_CLUSTER_ID"); clusterID != "" {
 					apiPrefix = path.Join("/k8s/clusters", clusterID, apiPrefix)
