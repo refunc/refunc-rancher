@@ -26,7 +26,9 @@ rancher integration
 
 ## Screenshots
 
-![functions.png](https://user-images.githubusercontent.com/354668/44616152-334f1800-a87d-11e8-92b4-0141988f31dc.png "Functions page")
+![functions.png](https://user-images.githubusercontent.com/354668/44694551-b13f3900-aaa0-11e8-8a9a-a19d562ec8d1.png "Functions page")
+
+![funcinst.png](https://user-images.githubusercontent.com/354668/44694576-cd42da80-aaa0-11e8-87b8-dedce53e420f.png "Funcinst page")
 
 ## License
 Copyright (c) 2018 [refunc.io](http://refunc.io)
