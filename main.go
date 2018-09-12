@@ -18,6 +18,7 @@ import (
 	"github.com/rancher/norman/types/mapper"
 	"github.com/rancher/norman/types/values"
 	"github.com/rancher/norman/urlbuilder"
+	"github.com/rancher/types/status"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	apiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
@@ -164,7 +165,9 @@ func newSchemas(version *types.APIVersion) *types.Schemas {
 	schemas := factory.Schemas(version)
 	baseFunc := schemas.DefaultMappers
 	schemas.DefaultMappers = func() []types.Mapper {
-		mappers := append(baseFunc(), &mapper.Scope{
+		mappers := append([]types.Mapper{
+			&statusMapper{},
+		}, append(baseFunc(), &mapper.Scope{
 			If: types.NamespaceScope,
 			Mappers: []types.Mapper{
 				&mapper.Move{
@@ -176,7 +179,7 @@ func newSchemas(version *types.APIVersion) *types.Schemas {
 					Optional: false,
 				},
 			},
-		})
+		})...)
 		return mappers
 	}
 	return schemas
@@ -230,5 +233,45 @@ func (e fillFundefIDField) ToInternal(data map[string]interface{}) error {
 }
 
 func (e fillFundefIDField) ModifySchema(schema *types.Schema, schemas *types.Schemas) error {
+	return nil
+}
+
+// copied from rancher/types, we do not want to include so many deps in vendor
+type statusMapper struct {
+}
+
+func (s statusMapper) FromInternal(data map[string]interface{}) {
+	status.Set(data)
+}
+
+func (s statusMapper) ToInternal(data map[string]interface{}) error {
+	return nil
+}
+
+func (s statusMapper) ModifySchema(schema *types.Schema, schemas *types.Schemas) error {
+	_, hasSpec := schema.ResourceFields["spec"]
+	_, hasStatus := schema.ResourceFields["status"]
+
+	if !hasSpec || !hasStatus {
+		return nil
+	}
+
+	schema.ResourceFields["state"] = types.Field{
+		CodeName: "State",
+		Type:     "string",
+	}
+	schema.ResourceFields["transitioning"] = types.Field{
+		CodeName: "Transitioning",
+		Type:     "enum",
+		Options: []string{
+			"yes",
+			"no",
+			"error",
+		},
+	}
+	schema.ResourceFields["transitioningMessage"] = types.Field{
+		CodeName: "TransitioningMessage",
+		Type:     "string",
+	}
 	return nil
 }

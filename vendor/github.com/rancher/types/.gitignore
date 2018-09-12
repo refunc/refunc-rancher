@@ -3,6 +3,7 @@
 /dist
 *.swp
 /.trash-cache
+/.idea
 /trash.lock
-/package/refunc-rancher
-/.vscode/
+/types
+*trash.lock

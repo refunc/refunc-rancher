@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	reflect "reflect"
-	"sort"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -53,53 +53,41 @@ type FuncinstSpec struct {
 	FuncdefRef *corev1.ObjectReference `json:"funcdefRef,omitempty"`
 	TriggerRef *corev1.ObjectReference `json:"triggerRef,omitempty"`
 
-	Runtime RuntimeConfig
-
-	// LastActivity is the last valid active for current group of func insts
-	// The operator will refresh this field periodically to keep func alive
-	LastActivity metav1.Time `json:"lastActivity"`
-}
-
-// FuncinstPhase is label to indicates current state for a func
-type FuncinstPhase string
-
-// Different phases during life time of a funcinst
-//
-//	Funcinst's states transition
-//
-//	         funcdef found                 xenv is ok (should be really fast)
-//	( o ) ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌> │ pending │ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌> │ ready │ ╌╌╌╌┐
-//	                              ┆  ^                               ┆         ┆
-//	    ( x )             funcdef ┆  ┆        xenv removed           v         ┆
-//	      ^               removed v  ┣╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌<╌╌╌╌╌╌╌╌┐  ┆         ┆
-//	      ┆                       ┆  ┆                            ┆╌╌┫      rs ┆
-//	 │ inactive │ <╌╌╌╌╌╌┳╌╌╌<╌╌╌╌┻╌╌(╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌<╌╌╌╌╌╌╌╌┘  ┆ created ┆
-//	                     ┆           ┆     funcdef removed           ┆         ┆
-//	     hash changed or ^      xenv ┆                               ^         ┆
-//	     funcdef removed ┆   removed ^                               ┆         ┆
-//	                ┌╌<╌╌┻╌╌<╌┳╌╌>╌╌╌┘                         ┌╌╌╌╌╌┘         ┆
-//	        tapping ┆         ┆       active pods > 0    ┌╌╌╌╌╌v╌╌╌╌╌╌┐        ┆
-//	                └╌╌> │ active │ <╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ ┆ activating ┆ <╌╌╌╌╌╌┘
-//                            ┆  active pods drop to 0   └╌╌╌╌╌^╌╌╌╌╌╌┘
-//                            └╌╌╌╌╌>╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘
-const (
-	Inactive FuncinstPhase = "Inactive" // funcinst cannot accept new events
-	Pending  FuncinstPhase = "Pending"  // waiting for a valid xenv is ready
-	Ready    FuncinstPhase = "Ready"    // runner is ready, refunc is idle that can be activated
-	Active   FuncinstPhase = "Active"   // can be invoked
-)
-
-// BackendRef contains a valid pod's IP and its ref
-type BackendRef struct {
-	IP     string                  `json:"string"`
-	PodRef *corev1.ObjectReference `json:"podRef,omitempty"`
+	Runtime RuntimeConfig `json:"runtime"`
 }
 
 // FuncinstStatus is the running status for a refunc
 type FuncinstStatus struct {
-	Phase FuncinstPhase `json:"phase"` // current refunc state
+	// Current service state of funcinst.
+	Conditions []FuncinstCondition
+	// number of active backends
+	Active int `json:"active,omitempty"`
+}
 
-	Backends []BackendRef `json:"backends,omitempty"`
+// FuncinstConditionType is label to indicates current state for a func
+type FuncinstConditionType string
+
+// Different phases during life time of a funcinst
+const (
+	FuncinstInactive FuncinstConditionType = "Inactive" // funcinst cannot accept new events
+	FuncinstPending  FuncinstConditionType = "Pending"  // waiting for a valid xenv is ready
+	FuncinstActive   FuncinstConditionType = "Active"   // can be invoked
+)
+
+// FuncinstCondition contains details for the current condition of this funcinst.
+type FuncinstCondition struct {
+	// Type of cluster condition.
+	Type FuncinstConditionType `json:"type"`
+	// Status of the condition, one of True, False, Unknown.
+	Status corev1.ConditionStatus `json:"status"`
+	// The last time this condition was updated.
+	LastUpdateTime string `json:"lastUpdateTime,omitempty"`
+	// Last time the condition transitioned from one status to another.
+	LastTransitionTime string `json:"lastTransitionTime,omitempty"`
+	// The reason for the condition's last transition.
+	Reason string `json:"reason,omitempty"`
+	// Human-readable message indicating details about last transition
+	Message string `json:"message,omitempty"`
 }
 
 // RuntimeConfig is runtime configuration for funcinst
@@ -147,72 +135,18 @@ func (t *Funcinst) Ref() *corev1.ObjectReference {
 	}
 }
 
-// SortBackends sorts backends by IP
-func SortBackends(backends []BackendRef) {
-	sort.Slice(backends, func(i int, j int) bool {
-		bi, bj := backends[i], backends[j]
-		if bi.PodRef != nil && bj.PodRef != nil {
-			return bi.PodRef.Name < bj.PodRef.Name
-		}
-		return bi.IP < bj.IP
-	})
-}
-
-// AppendBackend appends or updates backends
-func AppendBackend(backends []BackendRef, pod *corev1.Pod) []BackendRef {
-	ref := &corev1.ObjectReference{
-		Kind:       pod.Kind,
-		Namespace:  pod.Namespace,
-		Name:       pod.Name,
-		UID:        pod.UID,
-		APIVersion: pod.APIVersion,
-	}
-
-	// duplicates checking
-	for i, b := range backends {
-		if reflect.DeepEqual(b.PodRef, ref) {
-			return backends
-		}
-		// replace old
-		if b.IP == pod.Status.PodIP {
-			backends[i].PodRef = ref
-		}
-	}
-
-	return append(backends, BackendRef{
-		IP:     pod.Status.PodIP,
-		PodRef: ref,
-	})
-}
-
 // OnlyLastActivityChanged checks two funcinst returns true if only LastActivity is changed
 func OnlyLastActivityChanged(left, right *Funcinst) bool {
 	l, r := left.DeepCopy(), right.DeepCopy()
 	l.TypeMeta = r.TypeMeta
 	l.ObjectMeta = r.ObjectMeta
-	l.Spec.LastActivity = r.Spec.LastActivity
+	// l.Spec.LastActivity = r.Spec.LastActivity
+	l.Status.SetCondition(*r.Status.ActiveCondition())
 	return reflect.DeepEqual(l, r)
 }
 
 // NewDefaultPermissions returns default permissions for given inst
-func NewDefaultPermissions(fni *Funcinst, scopeRoot string, isSys bool) Permissions {
-	if isSys {
-		return Permissions{
-			Scope: scopeRoot,
-			Publish: []string{
-				"refunc.>",
-				"_refunc.>",
-				"_INBOX.*",
-				"_INBOX.*.*",
-			},
-			Subscribe: []string{
-				"refunc.>",
-				"_refunc.>",
-				"_INBOX.*",
-				"_INBOX.*.*",
-			},
-		}
-	}
+func NewDefaultPermissions(fni *Funcinst, scopeRoot string) Permissions {
 	return Permissions{
 		Scope: filepath.Join(scopeRoot, fni.Spec.FuncdefRef.Namespace, fni.Spec.FuncdefRef.Name, "data") + "/",
 		Publish: []string{
@@ -274,4 +208,141 @@ func (t Funcinst) ServiceEndpoint() string {
 // CryServiceEndpoint is endpoint to poke a inst to cry
 func (t *Funcinst) CryServiceEndpoint() string {
 	return t.ServiceEndpoint() + "._cry_"
+}
+
+// Touch updates LastUpdateTime of active conidtion
+func (ts *FuncinstStatus) Touch() *FuncinstStatus {
+	ts.ActiveCondition().LastUpdateTime = time.Now().Format(time.RFC3339)
+	return ts
+}
+
+// LastActivity returns last observed activity time
+func (ts *FuncinstStatus) LastActivity() time.Time {
+	if tm := ts.ActiveCondition().LastUpdateTime; tm != "" {
+		t, _ := time.Parse(time.RFC3339, tm)
+		return t
+	}
+	return time.Time{}
+}
+
+// ActiveCondition gets or creates a active condition
+func (ts *FuncinstStatus) ActiveCondition() *FuncinstCondition {
+	_, active := getFuncinstCondition(ts, FuncinstActive)
+	if active == nil {
+		active = newFuncinstCondition(FuncinstActive, corev1.ConditionFalse, "Created", "Created by function access")
+		active.LastUpdateTime = ""
+		if !ts.IsInactiveCondition() {
+			ts.SetCondition(*active)
+			_, active = getFuncinstCondition(ts, FuncinstActive)
+		}
+	}
+	return active
+}
+
+// IsActiveCondition returns true if current funcinst is marked as active
+func (ts *FuncinstStatus) IsActiveCondition() bool {
+	if _, active := getFuncinstCondition(ts, FuncinstActive); active != nil {
+		return active.Status == corev1.ConditionTrue
+	}
+	return false
+}
+
+// IsInactiveCondition returns true if current funcinst is marked as inactive
+func (ts *FuncinstStatus) IsInactiveCondition() bool {
+	if _, inactive := getFuncinstCondition(ts, FuncinstInactive); inactive != nil {
+		return inactive.Status == corev1.ConditionTrue
+	}
+	return false
+}
+
+// SetActiveCondition turns this funcinst into active
+func (ts *FuncinstStatus) SetActiveCondition(reason, message string) *FuncinstStatus {
+	if ts.IsInactiveCondition() {
+		return ts
+	}
+	active := ts.ActiveCondition()
+	active.Status = corev1.ConditionTrue
+	if active.Reason != reason && active.Message != message {
+		active.LastTransitionTime = time.Now().Format(time.RFC3339)
+		active.Reason = reason
+		active.Message = message
+	}
+	return ts.ClearCondition(FuncinstPending).SetCondition(*active)
+}
+
+// SetInactiveCondition turns this funcinst into inactive
+func (ts *FuncinstStatus) SetInactiveCondition(reason, message string) *FuncinstStatus {
+	return ts.Deactive(
+		"FuninstIsInactive",
+		"Funinst was put into inactive",
+	).SetCondition(
+		*newFuncinstCondition(FuncinstInactive, corev1.ConditionTrue, reason, message),
+	)
+}
+
+// SetPendingCondition turns this funcinst into pending
+func (ts *FuncinstStatus) SetPendingCondition(reason, message string) *FuncinstStatus {
+	return ts.Deactive(
+		"FuninstIsPending",
+		"Funinst was put into pendding",
+	).SetCondition(
+		*newFuncinstCondition(FuncinstPending, corev1.ConditionTrue, reason, message),
+	)
+}
+
+// Deactive turns active condition(if any) into False, returns *FuncinstStatus for chaining
+func (ts *FuncinstStatus) Deactive(reason, message string) *FuncinstStatus {
+	if _, active := getFuncinstCondition(ts, FuncinstActive); active != nil && active.Status == corev1.ConditionTrue {
+		active.Status = corev1.ConditionFalse
+		active.LastTransitionTime = time.Now().Format(time.RFC3339)
+		active.Reason = reason
+		active.Message = message
+	}
+	return ts
+}
+
+// SetCondition sets or inserts funcinst condition
+func (ts *FuncinstStatus) SetCondition(c FuncinstCondition) *FuncinstStatus {
+	pos, cp := getFuncinstCondition(ts, c.Type)
+	if cp != nil && cp.Status == c.Status && cp.Reason == c.Reason && cp.Message == c.Message {
+		return ts
+	}
+
+	if cp != nil {
+		ts.Conditions[pos] = c
+	} else {
+		ts.Conditions = append(ts.Conditions, c)
+	}
+	return ts
+}
+
+// ClearCondition removes confition of given type from conditions
+func (ts *FuncinstStatus) ClearCondition(t FuncinstConditionType) *FuncinstStatus {
+	pos, _ := getFuncinstCondition(ts, t)
+	if pos == -1 {
+		return ts
+	}
+	ts.Conditions = append(ts.Conditions[:pos], ts.Conditions[pos+1:]...)
+	return ts
+}
+
+func getFuncinstCondition(status *FuncinstStatus, t FuncinstConditionType) (int, *FuncinstCondition) {
+	for i := range status.Conditions {
+		if t == status.Conditions[i].Type {
+			return i, &status.Conditions[i]
+		}
+	}
+	return -1, nil
+}
+
+func newFuncinstCondition(condType FuncinstConditionType, status corev1.ConditionStatus, reason, message string) *FuncinstCondition {
+	now := time.Now().Format(time.RFC3339)
+	return &FuncinstCondition{
+		Type:               condType,
+		Status:             status,
+		LastUpdateTime:     now,
+		LastTransitionTime: now,
+		Reason:             reason,
+		Message:            message,
+	}
 }

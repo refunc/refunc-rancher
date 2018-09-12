@@ -72,9 +72,8 @@ type Runtime struct {
 	// name of builder, empty if using default
 	Name string `json:"name,omitempty"`
 
-	Envs         map[string]string `json:"envs,omitempty"`
-	Timeout      int               `json:"timeout,omitempty"`
-	IsSystemFunc bool              `json:"systemFunc,omitempty"`
+	Envs    map[string]string `json:"envs,omitempty"`
+	Timeout int               `json:"timeout,omitempty"`
 }
 
 // ErrUnknownTriggerType indicates that we cannot processed the given triger sepc
